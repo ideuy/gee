@@ -1,0 +1,18 @@
+# Archivos de credenciales
+credenciales_gee.json
+
+# Entorno virtual y temporales de Python
+.venv/
+venv/
+__pycache__/
+*.pyc
+.env
+
+# Carpetas de pruebas
+/dumps
+
+# Archivos de pruebas
+generar_dump.py
+crear_url.py
+probar_conexion.py
+
