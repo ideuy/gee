@@ -116,7 +116,7 @@ Para agregar nuevas capas o modificar las existentes, basta con editar el archiv
 1. El proyecto se publicó en un repositorio en **GitHub**.
 2. Se creó un **Web Service** en [Render.com](https://render.com/) y se vinculó el repositorio publicado de GitHub.
 3. Render detecta automáticamente el `Dockerfile` del proyecto.
-4. Al desplegar Render asignó un puerto dinámico mediante `$PORT` y proporcionó la URL HTTPS pública: [text](https://gee-ezk5.onrender.com/)
+4. Al desplegar Render asignó un puerto dinámico mediante `$PORT` y proporcionó la URL HTTPS pública: [https://gee-ezk5.onrender.com/](https://gee-ezk5.onrender.com/)
 
 ---
 
