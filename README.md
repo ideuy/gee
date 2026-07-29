@@ -120,12 +120,6 @@ Para agregar nuevas capas o modificar las existentes, basta con editar el archiv
 
 ---
 
-## Licencia
-
-Este proyecto está bajo la Licencia **MIT**. Consulta el archivo `LICENSE` para más detalles.
-
----
-
 ## Agradecimientos & Fuentes de Datos
 
 - **Copernicus Sentinel Data:** Por proveer imágenes satelitales ópticas multiespectrales abiertas.
