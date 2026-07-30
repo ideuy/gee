@@ -10,18 +10,36 @@ from dotenv import load_dotenv
 import ee
 
 # ------------------------------------------------------------------------------
-# Configuración e Inicialización de Google Earth Engine desde .env
+# Configuración e Inicialización de Google Earth Engine desde .env / Render
 # ------------------------------------------------------------------------------
 load_dotenv()
 
 SERVICE_ACCOUNT_EMAIL = os.getenv('SERVICE_ACCOUNT_EMAIL')
-KEY_FILE_PATH = os.getenv('KEY_FILE_PATH')
 PROJECT_ID = os.getenv('PROJECT_ID')
 
-credentials = ee.ServiceAccountCredentials(
-    email=SERVICE_ACCOUNT_EMAIL,
-    key_file=KEY_FILE_PATH
-)
+# Capturamos ambas opciones de autenticación
+KEY_DATA = os.getenv('KEY_DATA')            # Se usará en Render
+KEY_FILE_PATH = os.getenv('KEY_FILE_PATH')  # Se usará en Local
+
+if KEY_DATA:
+    # --- MODO PRODUCCIÓN (RENDER) ---
+    credentials = ee.ServiceAccountCredentials(
+        email=SERVICE_ACCOUNT_EMAIL,
+        key_data=KEY_DATA
+    )
+elif KEY_FILE_PATH and os.path.exists(KEY_FILE_PATH):
+    # --- MODO LOCAL ---
+    credentials = ee.ServiceAccountCredentials(
+        email=SERVICE_ACCOUNT_EMAIL,
+        key_file=KEY_FILE_PATH
+    )
+else:
+    raise ValueError(
+        "Error de autenticación con Google Earth Engine: "
+        "No se encontró 'KEY_DATA' en las variables de entorno de Render "
+        "ni el archivo especificado en 'KEY_FILE_PATH' de manera local."
+    )
+
 ee.Initialize(credentials=credentials, project=PROJECT_ID)
 
 # ------------------------------------------------------------------------------
