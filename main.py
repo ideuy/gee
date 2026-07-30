@@ -1,43 +1,33 @@
 import os
 import json
-from typing import List
+from typing import List, Optional
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
+from dotenv import load_dotenv
 import ee
 
 # ------------------------------------------------------------------------------
-# Configuración e Inicialización de Google Earth Engine
+# Configuración e Inicialización de Google Earth Engine desde .env
 # ------------------------------------------------------------------------------
-# Leemos las credenciales desde el Secret de Hugging Face
-gee_credentials_env = os.getenv("GEE_CREDENTIALS")
+load_dotenv()
 
-if gee_credentials_env:
-    # Cargar credenciales desde la variable de entorno JSON
-    credentials_info = json.loads(gee_credentials_env)
-    credentials = ee.ServiceAccountCredentials(
-        email=credentials_info["client_email"],
-        key_data=gee_credentials_env
-    )
-    PROJECT_ID = credentials_info.get("project_id", "mapas-495614")
-else:
-    # Fallback local para pruebas en tu PC
-    KEY_FILE_PATH = 'credenciales_gee.json'
-    SERVICE_ACCOUNT_EMAIL = 'gee-backend-service@mapas-495614.iam.gserviceaccount.com'
-    PROJECT_ID = 'mapas-495614'
-    credentials = ee.ServiceAccountCredentials(
-        email=SERVICE_ACCOUNT_EMAIL,
-        key_file=KEY_FILE_PATH
-    )
+SERVICE_ACCOUNT_EMAIL = os.getenv('SERVICE_ACCOUNT_EMAIL')
+KEY_FILE_PATH = os.getenv('KEY_FILE_PATH')
+PROJECT_ID = os.getenv('PROJECT_ID')
 
+credentials = ee.ServiceAccountCredentials(
+    email=SERVICE_ACCOUNT_EMAIL,
+    key_file=KEY_FILE_PATH
+)
 ee.Initialize(credentials=credentials, project=PROJECT_ID)
 
 # ------------------------------------------------------------------------------
 # Configuración de FastAPI
 # ------------------------------------------------------------------------------
-app = FastAPI(title="Geovisor Earth Engine")
+app = FastAPI(title="API Google Earth Engine")
 
 app.add_middleware(
     CORSMiddleware,
@@ -47,30 +37,57 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# Montar carpeta estática
+app.mount("/static", StaticFiles(directory="static"), name="static")
+
+
+@app.get("/")
+def servir_frontend():
+    """Sirve la interfaz web del geovisor en la raíz."""
+    return FileResponse("static/index.html")
+
+
 def cargar_configuracion_capas():
     with open("capas_config.json", "r", encoding="utf-8") as file:
         return json.load(file)
+
 
 def enmascarar_nubes_s2(imagen):
     qa = imagen.select('QA60')
     mascara_nubes = 1 << 10
     mascara_cirros = 1 << 11
-    mask = qa.bitwiseAnd(mascara_nubes).eq(0).And(qa.bitwiseAnd(mascara_cirros).eq(0))
+    
+    mask = (
+        qa.bitwiseAnd(mascara_nubes).eq(0)
+        .And(qa.bitwiseAnd(mascara_cirros).eq(0))
+    )
     return imagen.updateMask(mask)
 
+
+# Modelos Pydantic
 class SolicitudCapa(BaseModel):
     fecha_inicio: str
     fecha_fin: str
     tipo_capa: str
     bbox: List[float]
+    porcentaje_nubes: float = 60.0
 
-# ------------------------------------------------------------------------------
-# Endpoints de la API
-# ------------------------------------------------------------------------------
+
+class SolicitudPixel(BaseModel):
+    fecha_inicio: str
+    fecha_fin: str
+    tipo_capa: str
+    lat: float
+    lng: float
+    porcentaje_nubes: float = 60.0
+
+
+# Endpoints API
 @app.get("/api/capas")
 def obtener_lista_capas():
     config = cargar_configuracion_capas()
     return {clave: info["nombre"] for clave, info in config.items()}
+
 
 @app.post("/api/capa")
 def generar_capa(datos: SolicitudCapa):
@@ -89,7 +106,7 @@ def generar_capa(datos: SolicitudCapa):
             ee.ImageCollection('COPERNICUS/S2_SR_HARMONIZED')
             .filterBounds(area_visible)
             .filterDate(datos.fecha_inicio, datos.fecha_fin)
-            .filter(ee.Filter.lt('CLOUDY_PIXEL_PERCENTAGE', 60))
+            .filter(ee.Filter.lt('CLOUDY_PIXEL_PERCENTAGE', datos.porcentaje_nubes))
         )
 
         s2_limpio = s2_raw.map(enmascarar_nubes_s2)
@@ -104,7 +121,7 @@ def generar_capa(datos: SolicitudCapa):
         if not fechas_pasadas:
             return {
                 "status": "warning",
-                "message": "No se encontraron pasadas satelitales utilizables en este rango.",
+                "message": "No se encontraron pasadas satelitales con este filtro de nubes.",
                 "tile_url": None,
                 "fechas_pasadas": []
             }
@@ -129,6 +146,7 @@ def generar_capa(datos: SolicitudCapa):
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
+
 @app.post("/api/descargar-geotiff")
 def descargar_geotiff(datos: SolicitudCapa):
     config = cargar_configuracion_capas()
@@ -146,7 +164,7 @@ def descargar_geotiff(datos: SolicitudCapa):
             ee.ImageCollection('COPERNICUS/S2_SR_HARMONIZED')
             .filterBounds(area_visible)
             .filterDate(datos.fecha_inicio, datos.fecha_fin)
-            .filter(ee.Filter.lt('CLOUDY_PIXEL_PERCENTAGE', 60))
+            .filter(ee.Filter.lt('CLOUDY_PIXEL_PERCENTAGE', datos.porcentaje_nubes))
         )
 
         s2_limpio = s2_raw.map(enmascarar_nubes_s2)
@@ -165,16 +183,60 @@ def descargar_geotiff(datos: SolicitudCapa):
             'format': 'GEO_TIFF'
         })
 
-        return {"status": "ok", "download_url": url_descarga}
+        return {
+            "status": "ok",
+            "download_url": url_descarga
+        }
 
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error al generar GeoTIFF: {str(e)}")
 
-# ------------------------------------------------------------------------------
-# Servir Archivos Estáticos (Frontend)
-# ------------------------------------------------------------------------------
-@app.get("/")
-def read_root():
-    return FileResponse("index.html")
 
-app.mount("/", StaticFiles(directory=".", html=True), name="static")
+@app.post("/api/inspeccionar-pixel")
+def inspeccionar_pixel(datos: SolicitudPixel):
+    config = cargar_configuracion_capas()
+    if datos.tipo_capa not in config:
+        raise HTTPException(status_code=400, detail="Capa no válida")
+
+    capa_info = config[datos.tipo_capa]
+
+    try:
+        punto = ee.Geometry.Point([datos.lng, datos.lat])
+
+        s2_raw = (
+            ee.ImageCollection('COPERNICUS/S2_SR_HARMONIZED')
+            .filterBounds(punto)
+            .filterDate(datos.fecha_inicio, datos.fecha_fin)
+            .filter(ee.Filter.lt('CLOUDY_PIXEL_PERCENTAGE', datos.porcentaje_nubes))
+        )
+
+        s2_limpio = s2_raw.map(enmascarar_nubes_s2)
+
+        if s2_limpio.size().getInfo() == 0:
+            return {
+                "status": "warning",
+                "message": "Sin pasadas en esta ubicación para el rango/filtro seleccionado."
+            }
+
+        imagen = s2_limpio.median()
+
+        if capa_info["metodo"] == "normalized_difference":
+            calculo = imagen.normalizedDifference(capa_info["bandas"]).rename("indice")
+        elif capa_info["metodo"] == "select":
+            calculo = imagen.select(capa_info["bandas"])
+
+        valores = calculo.reduceRegion(
+            reducer=ee.Reducer.first(),
+            geometry=punto,
+            scale=10
+        ).getInfo()
+
+        return {
+            "status": "ok",
+            "nombre_capa": capa_info["nombre"],
+            "metodo": capa_info["metodo"],
+            "valores": valores
+        }
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error al inspeccionar píxel: {str(e)}")
