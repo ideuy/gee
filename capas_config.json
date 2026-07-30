@@ -78,5 +78,45 @@
       "max": 3000,
       "gamma": 1.2
     }
+  },
+  "ui": {
+    "nombre": "Índice Urbano (UI)",
+    "metodo": "normalized_difference",
+    "bandas": ["B12", "B8"],
+    "vis_params": {
+      "min": -0.3,
+      "max": 0.3,
+      "palette": ["#3182bd", "#9ecae1", "#ffeda0", "#feb24c", "#f03b20"]
+    }
+  },
+  "bsi": {
+    "nombre": "Índice de Suelo Desnudo (BSI)",
+    "metodo": "custom_formula",
+    "bandas": ["B11", "B4", "B8", "B2"],
+    "vis_params": {
+      "min": -0.2,
+      "max": 0.4,
+      "palette": ["#006837", "#78c679", "#ffffcc", "#fe9929", "#a63603"]
+    }
+  },
+  "infraestructura_asfalto": {
+    "nombre": "Infraestructura, Asfalto y Hormigón",
+    "metodo": "select",
+    "bandas": ["B12", "B11", "B4"],
+    "vis_params": {
+      "min": 0,
+      "max": 3200,
+      "gamma": 1.3
+    }
+  },
+  "red_vial_alta_resolucion": {
+    "nombre": "Traza Vial y Cobertura Impermeable",
+    "metodo": "select",
+    "bandas": ["B8", "B11", "B4"],
+    "vis_params": {
+      "min": 0,
+      "max": 3000,
+      "gamma": 1.2
+    }
   }
 }
