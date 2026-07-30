@@ -64,6 +64,38 @@ def enmascarar_nubes_s2(imagen):
     return imagen.updateMask(mask)
 
 
+def procesar_calculo_capa(imagen: ee.Image, tipo_capa: str, capa_info: dict) -> ee.Image:
+    """
+    Aplica la fórmula o selección de bandas según el método definido en capas_config.json.
+    """
+    metodo = capa_info.get("metodo")
+    bandas = capa_info.get("bandas", [])
+
+    if metodo == "normalized_difference":
+        return imagen.normalizedDifference(bandas).rename("indice")
+
+    elif metodo == "select":
+        return imagen.select(bandas)
+
+    elif metodo == "custom_formula":
+        if tipo_capa == "bsi" or set(bandas) == {"B11", "B4", "B8", "B2"}:
+            # Fórmula de BSI: ((SWIR1 + RED) - (NIR + BLUE)) / ((SWIR1 + RED) + (NIR + BLUE))
+            return imagen.expression(
+                "((B11 + B4) - (B8 + B2)) / ((B11 + B4) + (B8 + B2))",
+                {
+                    "B11": imagen.select("B11"),
+                    "B4":  imagen.select("B4"),
+                    "B8":  imagen.select("B8"),
+                    "B2":  imagen.select("B2")
+                }
+            ).rename("indice")
+        else:
+            raise HTTPException(status_code=400, detail=f"Fórmula no configurada para la capa: {tipo_capa}")
+
+    else:
+        raise HTTPException(status_code=400, detail=f"Método de cálculo no soportado: {metodo}")
+
+
 # Modelos Pydantic
 class SolicitudCapa(BaseModel):
     fecha_inicio: str
@@ -127,11 +159,7 @@ def generar_capa(datos: SolicitudCapa):
             }
 
         imagen = s2_limpio.median()
-
-        if capa_info["metodo"] == "normalized_difference":
-            calculo = imagen.normalizedDifference(capa_info["bandas"])
-        elif capa_info["metodo"] == "select":
-            calculo = imagen.select(capa_info["bandas"])
+        calculo = procesar_calculo_capa(imagen, datos.tipo_capa, capa_info)
 
         map_id = calculo.getMapId(capa_info["vis_params"])
         
@@ -143,6 +171,8 @@ def generar_capa(datos: SolicitudCapa):
             "nombre_capa": capa_info.get("nombre", "")
         }
 
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -170,10 +200,7 @@ def descargar_geotiff(datos: SolicitudCapa):
         s2_limpio = s2_raw.map(enmascarar_nubes_s2)
         imagen = s2_limpio.median()
 
-        if capa_info["metodo"] == "normalized_difference":
-            calculo = imagen.normalizedDifference(capa_info["bandas"])
-        elif capa_info["metodo"] == "select":
-            calculo = imagen.select(capa_info["bandas"])
+        calculo = procesar_calculo_capa(imagen, datos.tipo_capa, capa_info)
 
         url_descarga = calculo.getDownloadURL({
             'name': f"{datos.tipo_capa}_{datos.fecha_inicio}_a_{datos.fecha_fin}",
@@ -188,6 +215,8 @@ def descargar_geotiff(datos: SolicitudCapa):
             "download_url": url_descarga
         }
 
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error al generar GeoTIFF: {str(e)}")
 
@@ -219,11 +248,7 @@ def inspeccionar_pixel(datos: SolicitudPixel):
             }
 
         imagen = s2_limpio.median()
-
-        if capa_info["metodo"] == "normalized_difference":
-            calculo = imagen.normalizedDifference(capa_info["bandas"]).rename("indice")
-        elif capa_info["metodo"] == "select":
-            calculo = imagen.select(capa_info["bandas"])
+        calculo = procesar_calculo_capa(imagen, datos.tipo_capa, capa_info)
 
         valores = calculo.reduceRegion(
             reducer=ee.Reducer.first(),
@@ -238,5 +263,7 @@ def inspeccionar_pixel(datos: SolicitudPixel):
             "valores": valores
         }
 
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error al inspeccionar píxel: {str(e)}")
