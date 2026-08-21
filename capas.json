@@ -1,0 +1,175 @@
+{
+  "sentinel-2": {
+    "rgb": {
+      "nombre": "Color Natural (RGB)",
+      "metodo": "select",
+      "bandas": ["B4", "B3", "B2"],
+      "vis_params": {
+        "min": 0,
+        "max": 3000,
+        "gamma": 1.4
+      }
+    },
+    "ndvi": {
+      "nombre": "Índice de Vegetación (NDVI)",
+      "metodo": "normalized_difference",
+      "bandas": ["B8", "B4"],
+      "vis_params": {
+        "min": 0.0,
+        "max": 0.8,
+        "palette": ["#d7191c", "#fdae61", "#ffffbf", "#a6d96a", "#1a9641"]
+      }
+    },
+    "ndwi": {
+      "nombre": "Índice de Agua (NDWI)",
+      "metodo": "normalized_difference",
+      "bandas": ["B3", "B8"],
+      "vis_params": {
+        "min": -0.3,
+        "max": 0.3,
+        "palette": ["#f7fbff", "#deebf7", "#9ecae1", "#3182bd", "#08519c"]
+      }
+    },
+    "ndmi": {
+      "nombre": "Humedad en Vegetación (NDMI)",
+      "metodo": "normalized_difference",
+      "bandas": ["B8", "B11"],
+      "vis_params": {
+        "min": -0.2,
+        "max": 0.6,
+        "palette": ["#8c510a", "#d8b365", "#f6e8c3", "#c7ebe1", "#35978f", "#01665e"]
+      }
+    },
+    "ndbi": {
+      "nombre": "Índice de Edificación / Urbano (NDBI)",
+      "metodo": "normalized_difference",
+      "bandas": ["B11", "B8"],
+      "vis_params": {
+        "min": -0.3,
+        "max": 0.3,
+        "palette": ["#2b83ba", "#abdda4", "#ffffbf", "#fdae61", "#d7191c"]
+      }
+    },
+    "nbr": {
+      "nombre": "Índice de Severidad de Fuego (NBR)",
+      "metodo": "normalized_difference",
+      "bandas": ["B8", "B12"],
+      "vis_params": {
+        "min": -0.4,
+        "max": 0.6,
+        "palette": ["#7fbf7b", "#f7f7f7", "#e7298a", "#91003f"]
+      }
+    },
+    "falso_color": {
+      "nombre": "Infrarrojo (Falso Color)",
+      "metodo": "select",
+      "bandas": ["B8", "B4", "B3"],
+      "vis_params": {
+        "min": 0,
+        "max": 3000,
+        "gamma": 1.4
+      }
+    },
+    "swir_agricola": {
+      "nombre": "Agricultura / Humedad Suelo (SWIR)",
+      "metodo": "select",
+      "bandas": ["B11", "B8", "B2"],
+      "vis_params": {
+        "min": 0,
+        "max": 3000,
+        "gamma": 1.2
+      }
+    },
+    "ui": {
+      "nombre": "Índice Urbano (UI)",
+      "metodo": "normalized_difference",
+      "bandas": ["B12", "B8"],
+      "vis_params": {
+        "min": -0.3,
+        "max": 0.3,
+        "palette": ["#3182bd", "#9ecae1", "#ffeda0", "#feb24c", "#f03b20"]
+      }
+    },
+    "bsi": {
+      "nombre": "Índice de Suelo Desnudo (BSI)",
+      "metodo": "custom_formula",
+      "bandas": ["B11", "B4", "B8", "B2"],
+      "vis_params": {
+        "min": -0.2,
+        "max": 0.4,
+        "palette": ["#006837", "#78c679", "#ffffcc", "#fe9929", "#a63603"]
+      }
+    },
+    "infraestructura_asfalto": {
+      "nombre": "Infraestructura, Asfalto y Hormigón",
+      "metodo": "select",
+      "bandas": ["B12", "B11", "B4"],
+      "vis_params": {
+        "min": 0,
+        "max": 3200,
+        "gamma": 1.3
+      }
+    },
+    "red_vial_alta_resolucion": {
+      "nombre": "Traza Vial y Cobertura Impermeable",
+      "metodo": "select",
+      "bandas": ["B8", "B11", "B4"],
+      "vis_params": {
+        "min": 0,
+        "max": 3000,
+        "gamma": 1.2
+      }
+    }
+  },
+  "sentinel-1": {
+    "vv": {
+      "nombre": "Radar VV (Superficie / Agua)",
+      "bandas": ["VV"],
+      "min": -20,
+      "max": 0,
+      "vis_params": { "min": -20, "max": 0, "palette": ["darkblue", "blue", "cyan", "yellow", "red"] }
+    },
+    "mdi": {
+      "nombre": "Índice de Humedad del Suelo (MDI)",
+      "metodo": "custom_formula",
+      "bandas": ["VV", "VH"],
+      "vis_params": { "min": 0, "max": 1, "palette": ["brown", "orange", "yellow", "blue"] }
+    },
+    "inundacion": {
+      "nombre": "Detección de Inundación (Umbral)",
+      "bandas": ["INUNDACION"],
+      "min": 0,
+      "max": 1,
+      "vis_params": { "min": 0, "max": 1, "palette": ["white", "blue"] }
+    },
+    "vh": {
+      "nombre": "Radar VH (Vegetación / Volumen)",
+      "bandas": ["VH"],
+      "min": -25,
+      "max": -5,
+      "vis_params": { "min": -25, "max": -5, "palette": ["black", "purple", "blue", "green", "yellow"] }
+    },
+    "vv_vh": {
+      "nombre": "Relación VV / VH",
+      "bandas": ["VV_VH"],
+      "min": 0,
+      "max": 10,
+      "vis_params": { "min": 0, "max": 10, "palette": ["blue", "white", "red"] }
+    },
+    "rvi": {
+      "nombre": "Índice de Vegetación por Radar (RVI)",
+      "metodo": "custom_formula",
+      "bandas": ["VV", "VH"],
+      "min": 0,
+      "max": 1,
+      "vis_params": { "min": 0, "max": 1, "palette": ["brown", "yellow", "lightgreen", "darkgreen"] }
+    },
+    "rgb_sar": {
+      "nombre": "Falso Color SAR (RGB)",
+      "bandas": ["VV", "VH", "VV_VH"],
+      "min": -25,
+      "max": 0,
+      "vis_params": { "min": -25, "max": 0 }
+    }
+  }
+}

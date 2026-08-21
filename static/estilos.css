@@ -1,28 +1,149 @@
-body {
+/* ==========================================================================
+   [01] VARIABLES GLOBALES
+   ========================================================================== */
+
+:root {
+    --color-fondo: #f0f5fa;
+    --color-superficie: #ffffff;
+    --color-borde: #d4e6f1;
+    --color-advertencia: #FFF3CD;
+    --color-critico: #e74c3c;
+    --color-texto: #0d2a3e;
+    --color-atenuado: #5a7d94;
+    --color-destacado: #55B5E5;
+    --color-destacado-oscuro: #1a6a9a;
+    --color-destacado-muy-oscuro: #0a3a5a;
+
+    --fuente-principal: 'DM Sans', sans-serif;
+    --fuente-datos: 'DM Mono', monospace;
+}
+
+*, *::before, *::after {
+    box-sizing: border-box;
     margin: 0;
     padding: 0;
-    font-family: Arial, sans-serif;
 }
 
-#map {
+.oculto {
+    display: none !important;
+}
+
+body {
+    font-family: var(--fuente-principal);
+    display: flex;
+    flex-direction: column;
     height: 100vh;
-    width: 100vw;
+    overflow: hidden;
 }
 
-/* Panel Flotante de Controles */
+/* ==========================================================================
+   [02] ESTRUCTURA PRINCIPAL
+   ========================================================================== */
+
+.encabezado {
+    background-color: var(--color-destacado-muy-oscuro);
+    padding: 10px 20px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    height: 70px;
+    flex-shrink: 0;
+    z-index: 1001;
+}
+
+.encabezado__contenedor-titulo {
+    display: flex;
+    align-items: center;
+    gap: 15px;
+}
+
+.encabezado__logo {
+    height: 40px;
+    width: auto;
+}
+
+.encabezado__grupo-titulo {
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+}
+
+.encabezado__titulo {
+    font-size: 0.9rem;
+    color: var(--color-atenuado);
+    font-weight: 400;
+    letter-spacing: 0.6px;
+    margin: 0;
+}
+
+.encabezado__subtitulo {
+    color: var(--color-borde);
+    font-size: 0.8rem;
+    font-weight: 500;
+    letter-spacing: 0.6px;
+    margin: 0;
+}
+
+.pie {
+    background-color: var(--color-destacado-muy-oscuro);
+    color: var(--color-superficie);
+    text-align: center;
+    padding: 8px;
+    font-size: 0.8rem;
+    height: 35px; /* Altura fija para alineación exacta */
+    flex-shrink: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 1001;
+}
+
+.iconos {
+    height: 30px;
+    width: auto;
+    margin-top: 10px;
+}
+
+/* El mapa llena el espacio sobrante entre header y footer */
+#map {
+    flex: 1;
+    width: 100vw;
+    height: 100%;
+}
+
+/* ==========================================================================
+   [03] SELECTOR DE ZOOM DE LEAFLET
+   ========================================================================== */
+
+.leaflet-top.leaflet-left {
+    left: auto !important;
+    right: 0 !important;
+}
+
+.leaflet-top.leaflet-left .leaflet-control-zoom {
+    margin-top: 20px !important;
+    margin-right: 15px !important;
+}
+
+/* ==========================================================================
+   [04] BARRA LATERAL (CONTROL PANEL)
+   ========================================================================== */
+
 .control-panel {
     position: absolute;
-    top: 20px;
-    left: 60px;
+    top: 70px;    /* Pegado exacto al borde inferior del header */
+    bottom: 35px; /* Pegado exacto al borde superior del footer */
+    left: 0;      /* Pegado al borde izquierdo */
     z-index: 1000;
-    background: white;
+    background: var(--color-superficie);
     padding: 15px 20px;
-    border-radius: 8px;
-    box-shadow: 0 4px 15px rgba(0, 0, 0, 0.25);
+    box-shadow: 2px 0 10px rgba(0, 0, 0, 0.15); /* Sombra solo hacia la derecha */
     display: flex;
     flex-direction: column;
     gap: 10px;
-    width: 260px;
+    width: 280px;
+    overflow-y: auto; /* Scroll interno automático si el contenido excede la pantalla */
+    border-radius: 0; /* Sin bordes redondeados para un encaje limpio */
 }
 
 .control-panel h4 {
@@ -43,22 +164,23 @@ body {
 }
 
 .slider-val {
-    font-size: 12px;
+    font-size: 0.7rem;
     font-weight: bold;
-    color: #0288d1;
+    color: var(--color-destacado-muy-oscuro);
 }
 
 label {
-    font-size: 12px;
+    font-size: 0.8rem;
     font-weight: bold;
-    color: #444;
+    color: var(--color-destacado-oscuro);
 }
 
 input[type="date"], select {
     padding: 6px;
-    border: 1px solid #ccc;
+    border: 1px solid var(--color-borde);
     border-radius: 4px;
-    font-size: 13px;
+    font-size: 0.8rem;
+    background: var(--color-fondo);
 }
 
 input[type="range"] {
@@ -79,11 +201,11 @@ input[type="range"] {
 }
 
 .btn-cargar {
-    background-color: #0288d1;
+    background-color: var(--color-destacado-muy-oscuro);
 }
 
 .btn-cargar:hover {
-    background-color: #01579b;
+    background-color: var(--color-destacado-oscuro);
 }
 
 .btn-descargar {
@@ -103,23 +225,19 @@ input[type="range"] {
 .fechas-container {
     display: flex;
     flex-wrap: wrap;
-    gap: 6px;
-    max-height: 90px;
+    gap: 4px;
+    max-height: 180px;
     overflow-y: auto;
-    background: #f8f9fa;
-    padding: 8px;
-    border: 1px solid #e9ecef;
+    background: var(--color-fondo);
+    padding: 6px;
+    border: 1px solid var(--color-borde);
     border-radius: 4px;
-    font-size: 11px;
+    font-size: 0.7rem;
 }
 
 .fecha-badge {
-    background: #e0f2fe;
-    color: #0369a1;
-    padding: 3px 7px;
-    border-radius: 4px;
-    font-weight: 600;
-    border: 1px solid #bae6fd;
+    color: var(--color-texto);
+    padding: 4px 3px;
 }
 
 #statusMessage {

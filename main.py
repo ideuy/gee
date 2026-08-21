@@ -1,51 +1,19 @@
 import os
 import json
-from typing import List, Optional
-from fastapi import FastAPI, HTTPException
-from fastapi.middleware.cors import CORSMiddleware
-from fastapi.staticfiles import StaticFiles
-from fastapi.responses import FileResponse
-from pydantic import BaseModel
-from dotenv import load_dotenv
 import ee
+from fastapi import FastAPI, HTTPException
+from fastapi.staticfiles import StaticFiles
+from fastapi.middleware.cors import CORSMiddleware
+from pydantic import BaseModel, Field
+from typing import List, Optional
+from dotenv import load_dotenv
 
-# ------------------------------------------------------------------------------
-# Configuración e Inicialización de Google Earth Engine desde .env / Render
-# ------------------------------------------------------------------------------
+# ==========================================
+# 1. CONFIGURACIÓN INICIAL Y AUTENTICACIÓN
+# ==========================================
 load_dotenv()
 
-SERVICE_ACCOUNT_EMAIL = os.getenv('SERVICE_ACCOUNT_EMAIL')
-PROJECT_ID = os.getenv('PROJECT_ID')
-
-# Capturamos ambas opciones de autenticación
-KEY_DATA = os.getenv('KEY_DATA')            # Se usará en Render
-KEY_FILE_PATH = os.getenv('KEY_FILE_PATH')  # Se usará en Local
-
-if KEY_DATA:
-    # --- MODO PRODUCCIÓN (RENDER) ---
-    credentials = ee.ServiceAccountCredentials(
-        email=SERVICE_ACCOUNT_EMAIL,
-        key_data=KEY_DATA
-    )
-elif KEY_FILE_PATH and os.path.exists(KEY_FILE_PATH):
-    # --- MODO LOCAL ---
-    credentials = ee.ServiceAccountCredentials(
-        email=SERVICE_ACCOUNT_EMAIL,
-        key_file=KEY_FILE_PATH
-    )
-else:
-    raise ValueError(
-        "Error de autenticación con Google Earth Engine: "
-        "No se encontró 'KEY_DATA' en las variables de entorno de Render "
-        "ni el archivo especificado en 'KEY_FILE_PATH' de manera local."
-    )
-
-ee.Initialize(credentials=credentials, project=PROJECT_ID)
-
-# ------------------------------------------------------------------------------
-# Configuración de FastAPI
-# ------------------------------------------------------------------------------
-app = FastAPI(title="API Google Earth Engine")
+app = FastAPI()
 
 app.add_middleware(
     CORSMiddleware,
@@ -55,233 +23,329 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Montar carpeta estática
-app.mount("/static", StaticFiles(directory="static"), name="static")
+SERVICE_ACCOUNT_EMAIL = os.getenv('SERVICE_ACCOUNT_EMAIL')
+PROJECT_ID = os.getenv('PROJECT_ID')
+KEY_DATA = os.getenv('KEY_DATA')
+KEY_FILE_PATH = os.getenv('KEY_FILE_PATH')
 
-
-@app.get("/")
-def servir_frontend():
-    """Sirve la interfaz web del geovisor en la raíz."""
-    return FileResponse("static/index.html")
-
-
-def cargar_configuracion_capas():
-    with open("capas_config.json", "r", encoding="utf-8") as file:
-        return json.load(file)
-
-
-def enmascarar_nubes_s2(imagen):
-    qa = imagen.select('QA60')
-    mascara_nubes = 1 << 10
-    mascara_cirros = 1 << 11
-    
-    mask = (
-        qa.bitwiseAnd(mascara_nubes).eq(0)
-        .And(qa.bitwiseAnd(mascara_cirros).eq(0))
-    )
-    return imagen.updateMask(mask)
-
-
-def procesar_calculo_capa(imagen: ee.Image, tipo_capa: str, capa_info: dict) -> ee.Image:
-    """
-    Aplica la fórmula o selección de bandas según el método definido en capas_config.json.
-    """
-    metodo = capa_info.get("metodo")
-    bandas = capa_info.get("bandas", [])
-
-    if metodo == "normalized_difference":
-        return imagen.normalizedDifference(bandas).rename("indice")
-
-    elif metodo == "select":
-        return imagen.select(bandas)
-
-    elif metodo == "custom_formula":
-        if tipo_capa == "bsi" or set(bandas) == {"B11", "B4", "B8", "B2"}:
-            # Fórmula de BSI: ((SWIR1 + RED) - (NIR + BLUE)) / ((SWIR1 + RED) + (NIR + BLUE))
-            return imagen.expression(
-                "((B11 + B4) - (B8 + B2)) / ((B11 + B4) + (B8 + B2))",
-                {
-                    "B11": imagen.select("B11"),
-                    "B4":  imagen.select("B4"),
-                    "B8":  imagen.select("B8"),
-                    "B2":  imagen.select("B2")
-                }
-            ).rename("indice")
-        else:
-            raise HTTPException(status_code=400, detail=f"Fórmula no configurada para la capa: {tipo_capa}")
-
+try:
+    if KEY_DATA:
+        # Modo Producción (Render)
+        credentials = ee.ServiceAccountCredentials(
+            email=SERVICE_ACCOUNT_EMAIL,
+            key_data=KEY_DATA
+        )
+    elif KEY_FILE_PATH and os.path.exists(KEY_FILE_PATH):
+        # Modo Desarrollo (Local)
+        credentials = ee.ServiceAccountCredentials(
+            email=SERVICE_ACCOUNT_EMAIL,
+            key_file=KEY_FILE_PATH
+        )
     else:
-        raise HTTPException(status_code=400, detail=f"Método de cálculo no soportado: {metodo}")
+        raise ValueError("No se encontraron credenciales válidas para GEE.")
 
+    ee.Initialize(credentials=credentials, project=PROJECT_ID)
+    print("✅ Google Earth Engine inicializado correctamente.")
+except Exception as e:
+    print(f"❌ Error al inicializar GEE: {e}")
 
-# Modelos Pydantic
-class SolicitudCapa(BaseModel):
-    fecha_inicio: str
-    fecha_fin: str
+# ==========================================
+# 2. CARGAR CONFIGURACIÓN DE CAPAS
+# ==========================================
+CONFIG_PATH = "capas.json"
+
+try:
+    with open(CONFIG_PATH, "r", encoding="utf-8") as f:
+        config_capas = json.load(f)
+        print(f"✅ Archivo de configuración '{CONFIG_PATH}' cargado exitosamente.")
+except Exception as e:
+    print(f"❌ Error crítico al cargar {CONFIG_PATH}: {e}")
+    config_capas = {"sentinel-2": {}, "sentinel-1": {}}
+
+# ==========================================
+# 3. MODELOS PYDANTIC (ENTRADAS DE LA API)
+# ==========================================
+class CapaRequest(BaseModel):
+    sensor: str = Field(default="sentinel-2", description="sentinel-1 o sentinel-2")
     tipo_capa: str
-    bbox: List[float]
-    porcentaje_nubes: float = 60.0
-
-
-class SolicitudPixel(BaseModel):
     fecha_inicio: str
     fecha_fin: str
+    bbox: List[float]
+    porcentaje_nubes: Optional[int] = 30
+    orbita: Optional[str] = "AMBAS"
+
+class PixelRequest(BaseModel):
+    sensor: str = Field(default="sentinel-2")
     tipo_capa: str
     lat: float
     lng: float
-    porcentaje_nubes: float = 60.0
+    fecha_inicio: str
+    fecha_fin: str
+    porcentaje_nubes: Optional[int] = 30
+    orbita: Optional[str] = "AMBAS"
 
+class DescargaRequest(BaseModel):
+    sensor: str = Field(default="sentinel-2")
+    tipo_capa: str
+    fecha_inicio: str
+    fecha_fin: str
+    bbox: List[float]
+    porcentaje_nubes: Optional[int] = 30
+    orbita: Optional[str] = "AMBAS"
 
-# Endpoints API
+# ==========================================
+# 4. LÓGICA DE PROCESAMIENTO GEE (POR SENSOR)
+# ==========================================
+def enmascarar_nubes_s2(image):
+    """Enmascara nubes usando QA60 SIN dividir por 10000 para preservar los rangos originales 0-10000"""
+    qa = image.select('QA60')
+    cloudBitMask = 1 << 10
+    cirrusBitMask = 1 << 11
+    mask = qa.bitwiseAnd(cloudBitMask).eq(0).And(qa.bitwiseAnd(cirrusBitMask).eq(0))
+    return image.updateMask(mask)
+
+def procesar_sentinel_2(req, geometria):
+    """Lógica core dinámica para Sentinel-2 basada en capas.json"""
+    coleccion = ee.ImageCollection("COPERNICUS/S2_SR_HARMONIZED") \
+        .filterBounds(geometria) \
+        .filterDate(req.fecha_inicio, req.fecha_fin) \
+        .filter(ee.Filter.lt('CLOUDY_PIXEL_PERCENTAGE', req.porcentaje_nubes)) \
+        .map(enmascarar_nubes_s2)
+    
+    mediana = coleccion.median()
+    
+    config_capa = config_capas.get("sentinel-2", {}).get(req.tipo_capa, {})
+    metodo = config_capa.get("metodo")
+    bandas = config_capa.get("bandas", [])
+
+    if metodo == "normalized_difference" and len(bandas) == 2:
+        indice = mediana.normalizedDifference(bandas).rename(req.tipo_capa.upper())
+        mediana = mediana.addBands(indice)
+    elif metodo == "custom_formula" and req.tipo_capa == "bsi":
+        swir1 = mediana.select('B11')
+        red = mediana.select('B4')
+        nir = mediana.select('B8')
+        blue = mediana.select('B2')
+        bsi = swir1.add(red).subtract(nir.add(blue)) \
+            .divide(swir1.add(red).add(nir.add(blue))) \
+            .rename('BSI')
+        mediana = mediana.addBands(bsi)
+        
+    return mediana
+
+def procesar_sentinel_1(req, geometria):
+    """Lógica core para Sentinel-1 (Radar SAR) con soporte completo para índices e hidrología"""
+    coleccion = ee.ImageCollection("COPERNICUS/S1_GRD") \
+        .filterBounds(geometria) \
+        .filterDate(req.fecha_inicio, req.fecha_fin) \
+        .filter(ee.Filter.eq('instrumentMode', 'IW')) \
+        .filter(ee.Filter.listContains('transmitterReceiverPolarisation', 'VV')) \
+        .filter(ee.Filter.listContains('transmitterReceiverPolarisation', 'VH'))
+
+    if req.orbita and req.orbita.upper() in ["ASCENDING", "DESCENDING"]:
+        coleccion = coleccion.filter(ee.Filter.eq('orbitProperties_pass', req.orbita.upper()))
+
+    # Obtenemos las medianas base en dB
+    mediana = coleccion.select(['VV', 'VH']).median()
+    
+    # Relación VV / VH
+    vv_vh_db = mediana.select('VV').subtract(mediana.select('VH')).rename('VV_VH')
+    mediana = mediana.addBands(vv_vh_db)
+
+    # Cálculos condicionales específicos integrados en el objeto de salida
+    if req.tipo_capa == "mdi":
+        mdi = mediana.select('VV').add(20).divide(20).rename('MDI')
+        mediana = mediana.addBands(mdi)
+        
+    elif req.tipo_capa == "inundacion":
+        inundacion = mediana.select('VV').lt(-18).rename('INUNDACION')
+        mediana = mediana.addBands(inundacion)
+        
+    elif req.tipo_capa == "rvi":
+        vv_l = ee.Image(10).pow(mediana.select('VV').divide(10))
+        vh_l = ee.Image(10).pow(mediana.select('VH').divide(10))
+        rvi = vh_l.multiply(4).divide(vv_l.add(vh_l)).rename('RVI')
+        mediana = mediana.addBands(rvi)
+
+    return mediana
+
+# ==========================================
+# 5. ENDPOINTS DE LA API REST
+# ==========================================
 @app.get("/api/capas")
-def obtener_lista_capas():
-    config = cargar_configuracion_capas()
-    return {clave: info["nombre"] for clave, info in config.items()}
-
+async def obtener_capas(sensor: Optional[str] = None):
+    """Devuelve la configuración completa de capas."""
+    return config_capas
 
 @app.post("/api/capa")
-def generar_capa(datos: SolicitudCapa):
-    config = cargar_configuracion_capas()
-    if datos.tipo_capa not in config:
-        raise HTTPException(status_code=400, detail="Capa no válida")
-
-    capa_info = config[datos.tipo_capa]
-
+async def obtener_capa(req: CapaRequest):
     try:
-        area_visible = ee.Geometry.BBox(
-            datos.bbox[0], datos.bbox[1], datos.bbox[2], datos.bbox[3]
-        )
-
-        s2_raw = (
-            ee.ImageCollection('COPERNICUS/S2_SR_HARMONIZED')
-            .filterBounds(area_visible)
-            .filterDate(datos.fecha_inicio, datos.fecha_fin)
-            .filter(ee.Filter.lt('CLOUDY_PIXEL_PERCENTAGE', datos.porcentaje_nubes))
-        )
-
-        s2_limpio = s2_raw.map(enmascarar_nubes_s2)
-
-        fechas_pasadas = (
-            s2_limpio.aggregate_array('system:time_start')
-            .map(lambda d: ee.Date(d).format('YYYY-MM-dd'))
-            .distinct()
-            .getInfo()
-        )
-
-        if not fechas_pasadas:
-            return {
-                "status": "warning",
-                "message": "No se encontraron pasadas satelitales con este filtro de nubes.",
-                "tile_url": None,
-                "fechas_pasadas": []
-            }
-
-        imagen = s2_limpio.median()
-        calculo = procesar_calculo_capa(imagen, datos.tipo_capa, capa_info)
-
-        map_id = calculo.getMapId(capa_info["vis_params"])
+        geometria = ee.Geometry.Rectangle(req.bbox)
         
+        if req.sensor == "sentinel-2":
+            coleccion = ee.ImageCollection("COPERNICUS/S2_SR_HARMONIZED") \
+                .filterBounds(geometria) \
+                .filterDate(req.fecha_inicio, req.fecha_fin) \
+                .filter(ee.Filter.lt('CLOUDY_PIXEL_PERCENTAGE', req.porcentaje_nubes)) \
+                .map(enmascarar_nubes_s2)
+            imagen = coleccion.median()
+            config_vis = config_capas.get("sentinel-2", {}).get(req.tipo_capa)
+        elif req.sensor == "sentinel-1":
+            coleccion = ee.ImageCollection("COPERNICUS/S1_GRD") \
+                .filterBounds(geometria) \
+                .filterDate(req.fecha_inicio, req.fecha_fin) \
+                .filter(ee.Filter.eq('instrumentMode', 'IW')) \
+                .filter(ee.Filter.listContains('transmitterReceiverPolarisation', 'VV')) \
+                .filter(ee.Filter.listContains('transmitterReceiverPolarisation', 'VH'))
+            
+            if req.orbita and req.orbita.upper() in ["ASCENDING", "DESCENDING"]:
+                coleccion = coleccion.filter(ee.Filter.eq('orbitProperties_pass', req.orbita.upper()))
+            
+            # Se invoca la función centralizada que ya añade todas las bandas dinámicas necesarias
+            imagen = procesar_sentinel_1(req, geometria)
+            config_vis = config_capas.get("sentinel-1", {}).get(req.tipo_capa)
+        else:
+            raise ValueError(f"Sensor no soportado: {req.sensor}")
+
+        if not config_vis:
+            raise ValueError(f"Configuración no encontrada para: {req.tipo_capa} en {req.sensor}")
+
+        # Aplicar procesamiento de índices si corresponde (para Sentinel-2)
+        metodo = config_vis.get("metodo")
+        bandas = config_vis.get("bandas", [])
+        
+        if req.sensor == "sentinel-2":
+            if metodo == "normalized_difference" and len(bandas) == 2:
+                indice = imagen.normalizedDifference(bandas).rename(req.tipo_capa.upper())
+                imagen = imagen.addBands(indice)
+            elif metodo == "custom_formula" and req.tipo_capa == "bsi":
+                swir1 = imagen.select('B11')
+                red = imagen.select('B4')
+                nir = imagen.select('B8')
+                blue = imagen.select('B2')
+                bsi = swir1.add(red).subtract(nir.add(blue)) \
+                    .divide(swir1.add(red).add(nir.add(blue))) \
+                    .rename('BSI')
+                imagen = imagen.addBands(bsi)
+
+        # Configurar visualización de forma segura
+        v_params_json = config_vis.get("vis_params", {})
+        
+        if req.tipo_capa in ["ndvi", "ndwi", "ndmi", "ndbi", "nbr", "ui", "bsi", "rvi", "mdi", "inundacion"]:
+            vis_bands = [req.tipo_capa.upper()]
+        elif req.tipo_capa == "rgb_sar":
+            vis_bands = ["VV", "VH", "VV_VH"]
+        else:
+            vis_bands = config_vis.get('bandas') 
+
+        vis_params = {
+            'bands': vis_bands,
+            'min': config_vis.get('min', v_params_json.get('min', 0)),
+            'max': config_vis.get('max', v_params_json.get('max', 3000))
+        }
+        
+        if isinstance(vis_bands, list) and len(vis_bands) == 1:
+            if 'palette' in v_params_json:
+                vis_params['palette'] = v_params_json['palette']
+            elif 'paleta' in config_vis:
+                vis_params['palette'] = config_vis['paleta']
+                
+        if 'gamma' in v_params_json:
+            vis_params['gamma'] = v_params_json['gamma']
+
+        map_id = ee.Image(imagen).getMapId(vis_params)
+
+        try:
+            lista_fechas = coleccion.aggregate_array('system:time_start') \
+                .map(lambda t: ee.Date(t).format('YYYY-MM-dd')) \
+                .distinct().getInfo()
+        except Exception:
+            lista_fechas = []
+
         return {
-            "status": "ok",
             "tile_url": map_id['tile_fetcher'].url_format,
-            "fechas_pasadas": sorted(fechas_pasadas),
-            "vis_params": capa_info.get("vis_params", {}),
-            "nombre_capa": capa_info.get("nombre", "")
+            "vis_params": vis_params,
+            "nombre_capa": config_vis.get("nombre", req.tipo_capa),
+            "fechas_pasadas": lista_fechas if lista_fechas else []
         }
-
-    except HTTPException:
-        raise
+        
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-@app.post("/api/descargar-geotiff")
-def descargar_geotiff(datos: SolicitudCapa):
-    config = cargar_configuracion_capas()
-    if datos.tipo_capa not in config:
-        raise HTTPException(status_code=400, detail="Capa no válida")
-
-    capa_info = config[datos.tipo_capa]
-
-    try:
-        area_visible = ee.Geometry.BBox(
-            datos.bbox[0], datos.bbox[1], datos.bbox[2], datos.bbox[3]
-        )
-
-        s2_raw = (
-            ee.ImageCollection('COPERNICUS/S2_SR_HARMONIZED')
-            .filterBounds(area_visible)
-            .filterDate(datos.fecha_inicio, datos.fecha_fin)
-            .filter(ee.Filter.lt('CLOUDY_PIXEL_PERCENTAGE', datos.porcentaje_nubes))
-        )
-
-        s2_limpio = s2_raw.map(enmascarar_nubes_s2)
-        imagen = s2_limpio.median()
-
-        calculo = procesar_calculo_capa(imagen, datos.tipo_capa, capa_info)
-
-        url_descarga = calculo.getDownloadURL({
-            'name': f"{datos.tipo_capa}_{datos.fecha_inicio}_a_{datos.fecha_fin}",
-            'scale': 10,
-            'crs': 'EPSG:4326',
-            'region': area_visible,
-            'format': 'GEO_TIFF'
-        })
-
-        return {
-            "status": "ok",
-            "download_url": url_descarga
-        }
-
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Error al generar GeoTIFF: {str(e)}")
-
-
+        return {"error": str(e), "message": str(e)}
+    
 @app.post("/api/inspeccionar-pixel")
-def inspeccionar_pixel(datos: SolicitudPixel):
-    config = cargar_configuracion_capas()
-    if datos.tipo_capa not in config:
-        raise HTTPException(status_code=400, detail="Capa no válida")
-
-    capa_info = config[datos.tipo_capa]
-
+async def inspeccionar_pixel(req: PixelRequest):
     try:
-        punto = ee.Geometry.Point([datos.lng, datos.lat])
+        punto = ee.Geometry.Point([req.lng, req.lat])
+        
+        if req.sensor == "sentinel-2":
+            imagen = procesar_sentinel_2(req, punto)
+            config_vis = config_capas.get("sentinel-2", {}).get(req.tipo_capa)
+        elif req.sensor == "sentinel-1":
+            imagen = procesar_sentinel_1(req, punto)
+            config_vis = config_capas.get("sentinel-1", {}).get(req.tipo_capa)
+        else:
+            raise ValueError(f"Sensor no soportado: {req.sensor}")
 
-        s2_raw = (
-            ee.ImageCollection('COPERNICUS/S2_SR_HARMONIZED')
-            .filterBounds(punto)
-            .filterDate(datos.fecha_inicio, datos.fecha_fin)
-            .filter(ee.Filter.lt('CLOUDY_PIXEL_PERCENTAGE', datos.porcentaje_nubes))
-        )
+        if not config_vis:
+            raise ValueError(f"Configuración no encontrada para: {req.tipo_capa} en {req.sensor}")
+            
+        bandas = config_vis.get('bandas', [])
+        if req.tipo_capa in ["ndvi", "ndwi", "ndmi", "ndbi", "nbr", "ui", "bsi", "rvi", "mdi", "inundacion"]:
+            bandas = [req.tipo_capa.upper()]
 
-        s2_limpio = s2_raw.map(enmascarar_nubes_s2)
-
-        if s2_limpio.size().getInfo() == 0:
-            return {
-                "status": "warning",
-                "message": "Sin pasadas en esta ubicación para el rango/filtro seleccionado."
-            }
-
-        imagen = s2_limpio.median()
-        calculo = procesar_calculo_capa(imagen, datos.tipo_capa, capa_info)
-
-        valores = calculo.reduceRegion(
-            reducer=ee.Reducer.first(),
+        valores = imagen.select(bandas).reduceRegion(
+            reducer=ee.Reducer.mean(),
             geometry=punto,
-            scale=10
+            scale=10,
+            maxPixels=1e9
         ).getInfo()
 
         return {
             "status": "ok",
-            "nombre_capa": capa_info["nombre"],
-            "metodo": capa_info["metodo"],
+            "nombre_capa": config_vis.get("nombre", req.tipo_capa),
+            "metodo": config_vis.get("metodo", "select"),
             "valores": valores
         }
-
-    except HTTPException:
-        raise
+        
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Error al inspeccionar píxel: {str(e)}")
+        return {"status": "error", "message": str(e)}
+
+@app.post("/api/descargar-geotiff")
+async def descargar_geotiff(req: DescargaRequest):
+    try:
+        geometria = ee.Geometry.Rectangle(req.bbox)
+        
+        if req.sensor == "sentinel-2":
+            imagen = procesar_sentinel_2(req, geometria)
+            config_vis = config_capas.get("sentinel-2", {}).get(req.tipo_capa)
+        elif req.sensor == "sentinel-1":
+            imagen = procesar_sentinel_1(req, geometria)
+            config_vis = config_capas.get("sentinel-1", {}).get(req.tipo_capa)
+        else:
+            raise ValueError("Sensor no soportado.")
+            
+        if not config_vis:
+            raise ValueError("Configuración de capa no encontrada.")
+            
+        bandas = config_vis.get('bandas', [])
+        if req.tipo_capa in ["ndvi", "ndwi", "ndmi", "ndbi", "nbr", "ui", "bsi", "rvi", "mdi", "inundacion"]:
+            bandas = [req.tipo_capa.upper()]
+            
+        imagen_descarga = imagen.select(bandas)
+        
+        url_descarga = imagen_descarga.getDownloadURL({
+            'scale': 10,
+            'crs': 'EPSG:4326',
+            'region': geometria,
+            'format': 'GEO_TIFF'
+        })
+        
+        return {"download_url": url_descarga}
+        
+    except Exception as e:
+        return {"detail": str(e)}
+
+# ==========================================
+# 6. ARCHIVOS ESTÁTICOS (FRONTEND)
+# ==========================================
+app.mount("/", StaticFiles(directory="static", html=True), name="static")

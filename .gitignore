@@ -7,12 +7,18 @@ venv/
 __pycache__/
 *.pyc
 .env
+.vscode
 
-# Carpetas de pruebas
+# Carpetas
 /dumps
+/documentos
 
-# Archivos de pruebas
+# Archivos
 generar_dump.py
 crear_url.py
 probar_conexion.py
+credenciales_gee.json
+
+# Respaldos
+*.zip
 

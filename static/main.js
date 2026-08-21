@@ -12,6 +12,7 @@ L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
 
 let capaActiva = null;
 let popupInspector = L.popup();
+let configCapasGlobal = {}; // Guardaremos la estructura de capas completa
 
 // 2. Control de leyenda dinámica
 const legendControl = L.control({ position: 'bottomright' });
@@ -33,29 +34,69 @@ function inicializarFechas30Dias() {
     document.getElementById('fechaInicio').value = hace30Dias.toISOString().split('T')[0];
 }
 
-// 3. Cargar la lista de capas disponibles desde /api/capas
+// 3. Cargar la configuración general de capas desde /api/capas
 async function cargarOpcionesCapas() {
     try {
         const response = await fetch(`${API_URL}/api/capas`);
-        const capas = await response.json();
+        configCapasGlobal = await response.json();
         
-        const select = document.getElementById('tipoCapa');
-        select.innerHTML = '';
+        // Poblar el menú desplegable inicial según el sensor seleccionado
+        actualizarSelectCapas();
 
-        for (const [clave, nombre] of Object.entries(capas)) {
-            const option = document.createElement('option');
-            option.value = clave;
-            option.innerText = nombre;
-            select.appendChild(option);
+        // Esperar a que el mapa esté completamente listo y renderizado
+        if (map.getBounds().isValid()) {
+            actualizarCapa();
+        } else {
+            map.once('load', () => {
+                actualizarCapa();
+            });
+            // Fallback por seguridad si el evento load ya pasó
+            setTimeout(() => {
+                if (!capaActiva) actualizarCapa();
+            }, 500);
         }
-
-        actualizarCapa();
 
     } catch (error) {
         console.error(error);
         document.getElementById('statusMessage').innerText = 'Error al conectar con la API.';
     }
 }
+
+// Rellenar el select de capas dinámicamente según el sensor activo
+function actualizarSelectCapas() {
+    const sensorSeleccionado = document.getElementById('sensor').value;
+    const selectCapa = document.getElementById('tipoCapa');
+    selectCapa.innerHTML = '';
+
+    const capasDelSensor = configCapasGlobal[sensorSeleccionado];
+
+    if (capasDelSensor) {
+        for (const [clave, objCapa] of Object.entries(capasDelSensor)) {
+            const option = document.createElement('option');
+            option.value = clave;
+            option.innerText = objCapa.nombre || clave;
+            selectCapa.appendChild(option);
+        }
+    }
+}
+
+// Evento al cambiar de sensor (Óptico vs Radar)
+document.getElementById('sensor').addEventListener('change', function() {
+    const sensor = this.value;
+    const divOrbita = document.getElementById('divOrbita');
+    const divNubes = document.getElementById('divNubes');
+
+    if (sensor === 'sentinel-1') {
+        divOrbita.style.display = 'block';
+        divNubes.style.display = 'none'; // El radar no usa filtro de nubes
+    } else {
+        divOrbita.style.display = 'none';
+        divNubes.style.display = 'block';
+    }
+
+    actualizarSelectCapas();
+    actualizarCapa();
+});
 
 function obtenerBBoxActual() {
     const bounds = map.getBounds();
@@ -98,10 +139,12 @@ function actualizarLeyenda(visParams, nombreCapa) {
 
 // 4. Solicitar capas de Earth Engine al backend (/api/capa)
 async function actualizarCapa() {
+    const sensor = document.getElementById('sensor').value;
     const tipoCapa = document.getElementById('tipoCapa').value;
     const fechaInicio = document.getElementById('fechaInicio').value;
     const fechaFin = document.getElementById('fechaFin').value;
     const porcentajeNubes = parseFloat(document.getElementById('cloudSlider').value);
+    const orbita = document.getElementById('orbita').value;
     
     const btnCargar = document.getElementById('btnCargar');
     const status = document.getElementById('statusMessage');
@@ -118,11 +161,13 @@ async function actualizarCapa() {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
+                sensor: sensor,
                 tipo_capa: tipoCapa,
                 fecha_inicio: fechaInicio,
                 fecha_fin: fechaFin,
                 bbox: obtenerBBoxActual(),
-                porcentaje_nubes: porcentajeNubes
+                porcentaje_nubes: porcentajeNubes,
+                orbita: orbita
             })
         });
 
@@ -134,7 +179,7 @@ async function actualizarCapa() {
             const opacidadActual = parseFloat(document.getElementById('opacitySlider').value);
 
             capaActiva = L.tileLayer(data.tile_url, {
-                attribution: 'Google Earth Engine | Sentinel-2',
+                attribution: `Google Earth Engine | ${sensor.toUpperCase()}`,
                 opacity: opacidadActual
             }).addTo(map);
 
@@ -146,11 +191,12 @@ async function actualizarCapa() {
                     .join('');
                 status.innerText = `Mosaico generado (${data.fechas_pasadas.length} capturas).`;
             } else {
-                listaFechasDiv.innerHTML = '<span style="color:#d32f2f;">Sin pasadas utilizables.</span>';
+                listaFechasDiv.innerHTML = '<span style="color:#d32f2f;">Sin pasadas en este rango.</span>';
+                status.innerText = `Mosaico generado (sin metadatos de fecha).`;
             }
 
         } else {
-            status.innerText = data.message || 'Error al generar la capa.';
+            status.innerText = data.message || data.error || 'Error al generar la capa.';
             listaFechasDiv.innerHTML = '-';
             actualizarLeyenda(null, '');
         }
@@ -165,10 +211,12 @@ async function actualizarCapa() {
 
 // 5. Descarga de archivo GeoTIFF (/api/descargar-geotiff)
 async function descargarGeoTIFF() {
+    const sensor = document.getElementById('sensor').value;
     const tipoCapa = document.getElementById('tipoCapa').value;
     const fechaInicio = document.getElementById('fechaInicio').value;
     const fechaFin = document.getElementById('fechaFin').value;
     const porcentajeNubes = parseFloat(document.getElementById('cloudSlider').value);
+    const orbita = document.getElementById('orbita').value;
     
     const status = document.getElementById('statusMessage');
     const btnDescargar = document.getElementById('btnDescargar');
@@ -179,18 +227,20 @@ async function descargarGeoTIFF() {
     }
 
     btnDescargar.disabled = true;
-    status.innerText = 'Generando archivo GeoTIFF (10m)...';
+    status.innerText = 'Generando archivo GeoTIFF...';
 
     try {
         const response = await fetch(`${API_URL}/api/descargar-geotiff`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
+                sensor: sensor,
                 tipo_capa: tipoCapa,
                 fecha_inicio: fechaInicio,
                 fecha_fin: fechaFin,
                 bbox: obtenerBBoxActual(),
-                porcentaje_nubes: porcentajeNubes
+                porcentaje_nubes: porcentajeNubes,
+                orbita: orbita
             })
         });
 
@@ -214,70 +264,22 @@ async function descargarGeoTIFF() {
 // 6. Configuración y formateador enriquecido para el Inspector de Píxel
 function construirContenidoPopup(data, tipoCapa, lat, lng) {
     const { nombre_capa, metodo, valores } = data;
-
-    // 1. Detección inteligente por palabras clave
     const textoBusqueda = `${tipoCapa || ''} ${nombre_capa || ''}`.toLowerCase();
 
-    let claveCapa = 'desconocida';
-    if (textoBusqueda.includes('asfalto') || textoBusqueda.includes('infraestructura')) {
-        claveCapa = 'infraestructura_asfalto';
-    } else if (textoBusqueda.includes('vial') || textoBusqueda.includes('impermeable') || textoBusqueda.includes('red_vial')) {
-        claveCapa = 'red_vial_alta_resolucion';
-    } else if (textoBusqueda.includes('bsi') || textoBusqueda.includes('desnudo')) {
-        claveCapa = 'bsi';
-    } else if (textoBusqueda.includes('ui') || (textoBusqueda.includes('urbano') && !textoBusqueda.includes('ndbi'))) {
-        claveCapa = 'ui';
-    } else if (textoBusqueda.includes('swir') || textoBusqueda.includes('agri') || textoBusqueda.includes('humedad')) {
-        claveCapa = 'swir';
-    } else if (textoBusqueda.includes('natural') || textoBusqueda.includes('rgb')) {
-        claveCapa = 'color_natural';
-    } else if (textoBusqueda.includes('falso')) {
-        claveCapa = 'falso_color';
-    } else if (textoBusqueda.includes('ndvi')) {
-        claveCapa = 'ndvi';
-    } else if (textoBusqueda.includes('ndwi')) {
-        claveCapa = 'ndwi';
-    } else if (textoBusqueda.includes('ndbi')) {
-        claveCapa = 'ndbi';
-    } else if (textoBusqueda.includes('ndmi')) {
-        claveCapa = 'ndmi';
-    } else if (textoBusqueda.includes('nbr')) {
-        claveCapa = 'nbr';
-    }
-
-    // -------------------------------------------------------------------------
-    // HELPERS: Generadores de HTML reutilizables
-    // -------------------------------------------------------------------------
-    
-    const renderIndice = (vals, rangos) => {
-        const val = vals?.indice !== undefined ? vals.indice : (typeof vals === 'number' ? vals : null);
-        if (val === undefined || val === null) return '<i>Sin datos en esta coordenada.</i>';
-
-        const regla = rangos.find(r => val > r.threshold) || rangos[rangos.length - 1];
-
-        return `
-            <div style="margin: 8px 0; display: flex; align-items: center; justify-content: space-between;">
-                <b>Valor calculado:</b>
-                <span style="font-size: 1.15em; font-weight: bold; color: ${regla.color};">${val.toFixed(4)}</span>
-            </div>
-            <div style="background: #f5f5f5; padding: 6px 8px; border-left: 3px solid ${regla.color}; border-radius: 2px;">
-                <b>Diagnóstico:</b> <span style="color: #333;">${regla.diagnostico}</span>
-            </div>
-        `;
-    };
+    let claveCapa = tipoCapa; // Usamos el id de la capa directamente como clave principal
 
     const renderBandas = (vals, nombresBandas = {}, interpretacionText = '') => {
         if (!vals) return '<i>Sin datos en esta coordenada.</i>';
 
         const items = Object.entries(vals).map(([banda, val]) => {
             const etiqueta = nombresBandas[banda] || banda;
-            const pct = (val !== null && val !== undefined) ? (val / 100).toFixed(2) : '-';
-            return `<li><b>${etiqueta}:</b> ${val ?? '-'} <span style="color:#666;">(${pct}%)</span></li>`;
+            const valFormateado = (typeof val === 'number') ? val.toFixed(2) : val;
+            return `<li><b>${etiqueta}:</b> ${valFormateado}</li>`;
         }).join('');
 
         return `
             <div style="margin: 6px 0;">
-                <b>Desglose por Banda (Reflectancia):</b>
+                <b>Desglose por Banda / Parámetro:</b>
                 <ul style="margin: 4px 0; padding-left: 18px;">${items}</ul>
             </div>
             <div style="background: #f0f4f9; padding: 6px; border-radius: 4px; font-size: 0.82em; color: #444;">
@@ -286,124 +288,38 @@ function construirContenidoPopup(data, tipoCapa, lat, lng) {
         `;
     };
 
-    // -------------------------------------------------------------------------
-    // DICCIONARIO DE CAPAS
-    // -------------------------------------------------------------------------
     const metadatosCapas = {
-        'ui': {
-            titulo: 'Índice Urbano (UI)',
-            descripcion: 'Mide la presencia de estructuras construidas, techos y pavimentos comparando SWIR2 (B12) con NIR (B8).',
-            interpretar: (vals) => renderIndice(vals, [
-                { threshold: 0.1, color: '#f03b20', diagnostico: 'Superficie construida densa, pavimentos, asfalto o edificación' },
-                { threshold: -0.1, color: '#feb24c', diagnostico: 'Zona de transición, suelo descubierto o infraestructura dispersa' },
-                { threshold: -Infinity, color: '#3182bd', diagnostico: 'Cobertura natural (Vegetación activa, bosque o cuerpos de agua)' }
-            ])
+        'vv': {
+            titulo: 'Retrodispersión VV (dB)',
+            descripcion: 'Mide la retrodispersión de la señal radar en polarización vertical-vertical.',
+            interpretar: (vals) => renderBandas(vals, { VV: 'VV (dB)' }, 'Valores más bajos indican superficies lisas (agua, planicies), mientras que valores altos reflejan rugosidad o estructuras urbanas.')
         },
-        'bsi': {
-            titulo: 'Índice de Suelo Desnudo (BSI)',
-            descripcion: 'Combina bandas espectrales para diferenciar suelo limpio, tierra arada y movimiento de suelos por obras viales.',
-            interpretar: (vals) => renderIndice(vals, [
-                { threshold: 0.15, color: '#a63603', diagnostico: 'Suelo totalmente descubierto, movimiento de tierras o cantera' },
-                { threshold: 0.0, color: '#fe9929', diagnostico: 'Suelo parcialmente despejado, rastrojo seco o baja densidad vegetal' },
-                { threshold: -Infinity, color: '#006837', diagnostico: 'Suelo cubierto por vegetación viva o agua' }
-            ])
+        'vh': {
+            titulo: 'Retrodispersión VH (dB)',
+            descripcion: 'Mide la retrodispersión en polarización vertical-horizontal.',
+            interpretar: (vals) => renderBandas(vals, { VH: 'VH (dB)' }, 'Sensible al volumen de vegetación y estructura tridimensional del terreno.')
         },
-        'infraestructura_asfalto': {
-            titulo: 'Infraestructura, Asfalto y Hormigón',
-            descripcion: 'Combinación SWIR2-SWIR1-Rojo (B12, B11, B4) para resaltar materiales de construcción y red vial.',
-            interpretar: (vals) => renderBandas(vals, 
-                { B12: 'B12 (SWIR 2)', B11: 'B11 (SWIR 1)', B4: 'B4 (Rojo)' },
-                'El hormigón y asfalto destacan en tonos brillantes o azulados, mientras que el suelo desnudo aparece magenta/marrón.'
-            )
-        },
-        'red_vial_alta_resolucion': {
-            titulo: 'Traza Vial y Cobertura Impermeable',
-            descripcion: 'Combinación NIR-SWIR1-Rojo (B8, B11, B4) aprovechando la resolución espacial de 10 m de la banda B8 para perfilar caminos y calles.',
-            interpretar: (vals) => renderBandas(vals, 
-                { B8: 'B8 (NIR - 10m)', B11: 'B11 (SWIR 1)', B4: 'B4 (Rojo)' },
-                'Ofrece alta definición de bordes. Ideal para identificar apertura de caminos, rutas secundarias y vías de tren.'
-            )
+        'vv_vh': {
+            titulo: 'Cociente VV/VH',
+            descripcion: 'Relación entre polarizaciones útil para discriminación de coberturas y humedad.',
+            interpretar: (vals) => renderBandas(vals, { VV_VH: 'VV/VH (dB)' }, 'Calculado mediante diferencia logarítmica (VV - VH).')
         },
         'color_natural': {
-            titulo: 'Reflectancia de la Superficie (Color Natural RGB)',
-            descripcion: 'Mide la proporción de luz solar que refleja la Tierra en el espectro visible (Azul, Verde, Rojo), reproduciendo el color real del terreno.',
-            interpretar: (vals) => renderBandas(vals, 
-                { B2: 'B2 (Azul)', B3: 'B3 (Verde)', B4: 'B4 (Rojo)' },
-                'Los valores corresponden al producto Sentinel-2 Nivel-2A (Reflectancia en Superficie escalada x 10.000).'
-            )
-        },
-        'falso_color': {
-            titulo: 'Reflectancia Infrarroja (Falso Color)',
-            descripcion: 'Destaca la respuesta de la vegetación densa y estructuras urbanas usando el Infrarrojo Cercano.',
-            interpretar: (vals) => renderBandas(vals, 
-                { B8: 'B8 (NIR - Infrarrojo)', B4: 'B4 (Rojo)', B3: 'B3 (Verde)' },
-                'La cubierta vegetal viva refleja con gran intensidad en B8 (NIR). Cuanto mayor es el % de B8 respecto a B4, mayor es el vigor celular.'
-            )
-        },
-        'swir': {
-            titulo: 'Agricultura / Humedad Suelo (SWIR)',
-            descripcion: 'Combina el Infrarrojo de Onda Corta con NIR para penetrar bruma atmosférica, medir humedad foliar/suelo y diferenciar vegetación de suelo desnudo.',
-            interpretar: (vals) => renderBandas(vals, 
-                { B11: 'B11 (SWIR 1)', B12: 'B12 (SWIR 2)', B8: 'B8 (NIR - Infrarrojo)', B2: 'B2 (Azul)', B3: 'B3 (Verde)', B4: 'B4 (Rojo)' },
-                'Las bandas SWIR absorben fuertemente en presencia de agua. Los valores divididos entre 10.000 representan el porcentaje real de reflectancia.'
-            )
+            titulo: 'Reflectancia de la Superficie (RGB)',
+            descripcion: 'Color real del terreno (Sentinel-2).',
+            interpretar: (vals) => renderBandas(vals, { B2: 'Azul', B3: 'Verde', B4: 'Rojo' }, 'Reflectancia superficial escalada.')
         },
         'ndvi': {
             titulo: 'Índice de Vegetación (NDVI)',
-            descripcion: 'Evalúa la masa foliar y la salud fotosintética de la vegetación. Rango: -1.0 a +1.0.',
-            interpretar: (vals) => renderIndice(vals, [
-                { threshold: 0.5, color: '#2e7d32', diagnostico: 'Vegetación densa, boscosa o cultivos de alto vigor' },
-                { threshold: 0.2, color: '#7cb342', diagnostico: 'Vegetación escasa, pastizales o cultivos en desarrollo' },
-                { threshold: 0.0, color: '#8d6e63', diagnostico: 'Suelo desnudo, rocas o cobertura urbana' },
-                { threshold: -Infinity, color: '#0288d1', diagnostico: 'Cuerpo de agua, nieve o sombras profundas' }
-            ])
-        },
-        'ndwi': {
-            titulo: 'Índice de Agua (NDWI)',
-            descripcion: 'Delimita la presencia de agua superficial y el nivel de humedad del suelo/foliar. Rango: -1.0 a +1.0.',
-            interpretar: (vals) => renderIndice(vals, [
-                { threshold: 0.3, color: '#0288d1', diagnostico: 'Cuerpo de agua claro (ríos, lagunas, embalses)' },
-                { threshold: 0.0, color: '#00acc1', diagnostico: 'Zona húmeda, vegetación saturada o agua turbia' },
-                { threshold: -Infinity, color: '#616161', diagnostico: 'Superficie no acuática (suelo seco, vegetación o zona urbana)' }
-            ])
-        },
-        'ndbi': {
-            titulo: 'Índice de Edificación / Urbano (NDBI)',
-            descripcion: 'Mide la presencia de zonas construidas, infraestructuras y superficies impermeables comparando SWIR y NIR. Rango: -1.0 a +1.0.',
-            interpretar: (vals) => renderIndice(vals, [
-                { threshold: 0.1, color: '#d32f2f', diagnostico: 'Área urbana, edificación, pavimento o suelo desnudo árido/seco' },
-                { threshold: -0.1, color: '#f57c00', diagnostico: 'Cobertura mixta, vegetación escasa o transición rural/urbana' },
-                { threshold: -Infinity, color: '#388e3c', diagnostico: 'Zona no urbana (Vegetación saludable, humedad o cuerpo de agua)' }
-            ])
-        },
-        'ndmi': {
-            titulo: 'Índice de Humedad de la Vegetación (NDMI)',
-            descripcion: 'Mide el contenido de agua en la cubierta vegetal (NIR - SWIR). Clave para estrés hídrico y prevención de incendios. Rango: -1.0 a +1.0.',
-            interpretar: (vals) => renderIndice(vals, [
-                { threshold: 0.3, color: '#0288d1', diagnostico: 'Vegetación canopia densa sin estrés hídrico (alto contenido de agua)' },
-                { threshold: 0.1, color: '#7cb342', diagnostico: 'Humedad moderada / vegetación con estrés hídrico leve' },
-                { threshold: -0.1, color: '#f57c00', diagnostico: 'Baja humedad / estrés hídrico severo o suelo disperso' },
-                { threshold: -Infinity, color: '#d32f2f', diagnostico: 'Suelo desnudo, vegetación seca/muerta o superficie sin humedad' }
-            ])
-        },
-        'nbr': {
-            titulo: 'Índice de Quemado / Incendios (NBR)',
-            descripcion: 'Cuantifica la severidad del fuego y áreas afectadas comparando biomasa viva (NIR) con suelo/ceniza expuesto (SWIR2). Rango: -1.0 a +1.0.',
-            interpretar: (vals) => renderIndice(vals, [
-                { threshold: 0.1, color: '#2e7d32', diagnostico: 'Vegetación saludable o superficie sin evidencia de quemado' },
-                { threshold: -0.1, color: '#f57c00', diagnostico: 'Suelo descubierto, vegetación muy dispersa o baja severidad de fuego' },
-                { threshold: -Infinity, color: '#d32f2f', diagnostico: 'Área afectada por incendio (Severidad de quemado moderada a alta)' }
-            ])
+            descripcion: 'Evalúa vigor fotosintético.',
+            interpretar: (vals) => `<b>Valor:</b> ${typeof vals === 'object' ? (vals.indice ?? JSON.stringify(vals)) : vals}`
         }
     };
 
-    // Plantilla de respaldo genérica
     const meta = metadatosCapas[claveCapa] || {
         titulo: nombre_capa || 'Información del Píxel',
-        descripcion: metodo === 'normalized_difference' || metodo === 'custom_formula'
-            ? 'Índice espectral calculado.' 
-            : 'Valores brutos de las bandas espectrales.',
-        interpretar: (vals) => `<code>${JSON.stringify(vals)}</code>`
+        descripcion: 'Valores espectrales o de radar recuperados.',
+        interpretar: (vals) => `<pre style="font-size:0.9em;">${JSON.stringify(vals, null, 2)}</pre>`
     };
 
     return `
@@ -412,22 +328,20 @@ function construirContenidoPopup(data, tipoCapa, lat, lng) {
                 <h4 style="margin: 0; color: #1a73e8; font-size: 1.05em;">${meta.titulo}</h4>
                 <small style="color: #777;">Coordenadas: ${lat.toFixed(4)}, ${lng.toFixed(4)}</small>
             </div>
-            
-            <p style="margin: 0 0 8px 0; color: #555; font-size: 0.85em;">
-                ${meta.descripcion}
-            </p>
-
+            <p style="margin: 0 0 8px 0; color: #555; font-size: 0.85em;">${meta.descripcion}</p>
             ${meta.interpretar(valores)}
         </div>
     `;
 }
 
-// Evento de clic sobre el mapa
+// Evento de clic sobre el mapa (Inspector de Píxel)
 map.on('click', async function(e) {
+    const sensor = document.getElementById('sensor').value;
     const tipoCapa = document.getElementById('tipoCapa').value;
     const fechaInicio = document.getElementById('fechaInicio').value;
     const fechaFin = document.getElementById('fechaFin').value;
     const porcentajeNubes = parseFloat(document.getElementById('cloudSlider').value);
+    const orbita = document.getElementById('orbita').value;
 
     if (!capaActiva || !tipoCapa) return;
 
@@ -438,7 +352,7 @@ map.on('click', async function(e) {
         .setLatLng(e.latlng)
         .setContent(`
             <div style="text-align: center; padding: 8px;">
-                <b style="color: #1a73e8;">Consultando Sentinel-2...</b><br>
+                <b style="color: #1a73e8;">Consultando ${sensor.toUpperCase()}...</b><br>
                 <small style="color: #666;">Lat: ${lat.toFixed(4)}, Lng: ${lng.toFixed(4)}</small>
             </div>
         `)
@@ -449,12 +363,14 @@ map.on('click', async function(e) {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
+                sensor: sensor,
                 tipo_capa: tipoCapa,
                 fecha_inicio: fechaInicio,
                 fecha_fin: fechaFin,
                 lat: lat,
                 lng: lng,
-                porcentaje_nubes: porcentajeNubes
+                porcentaje_nubes: porcentajeNubes,
+                orbita: orbita
             })
         });
 
